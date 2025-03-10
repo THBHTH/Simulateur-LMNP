@@ -408,7 +408,7 @@ def projeter_sur_duree(prix_achat, travaux, mobilier, loyer_mensuel, charges_ann
 
 
 if __name__ == "__main__":
-    main()ualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
+    main(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
     
     projection = []
     loyer = loyer_mensuel
