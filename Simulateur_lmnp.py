@@ -487,7 +487,7 @@ if __name__ == "__main__":
             "rentabilite": calculer_rentabilite(cashflow_annuel, prix_acquisition)
         })
     
-    return pd.DataFrame(projection)
+return pd.DataFrame(projection)
 
 # Fonction pour créer les graphiques
 def create_evolution_graph(df, y_columns, title, y_axis_title, colors=None):
