@@ -21,7 +21,332 @@ Cette application est un simulateur basé sur le fichier Excel 'Faut-il rester e
 **Remplissez uniquement les champs en bleu**, l'application s'adaptera à votre situation.
 """)
 
-# Fonction pour colorer les champs modifiables en bleu
+# ----- FONCTIONS DE CALCUL -----
+# Ces fonctions reproduisent la logique des calculs du fichier Excel
+
+def calculer_frais_notaire(prix_achat, taux_frais_notaire):
+    """Calcule les frais de notaire."""
+    return prix_achat * taux_frais_notaire
+
+def calculer_prix_acquisition(prix_achat, travaux, frais_notaire):
+    """Calcule le prix d'acquisition total."""
+    return prix_achat + travaux + frais_notaire
+
+def calculer_loyer_annuel(loyer_mensuel, vacance_locative):
+    """Calcule le loyer annuel en tenant compte de la vacance locative."""
+    return loyer_mensuel * (12 - vacance_locative)
+
+def calculer_charges_annuelles(taxe_fonciere, charges_copro, entretien_courant, 
+                               gestion_locative, comptable, gros_entretien, 
+                               assurance_pno, autres_depenses):
+    """Calcule les charges annuelles totales."""
+    return (taxe_fonciere + charges_copro + entretien_courant + 
+            gestion_locative * 12 + comptable * 12 + gros_entretien + 
+            assurance_pno + autres_depenses)
+
+def calculer_mensualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance):
+    """Calcule la mensualité du prêt (capital + intérêts + assurance)."""
+    taux_mensuel = taux_emprunt / 12
+    nombre_mensualites = duree_emprunt * 12
+    
+    # Formule de calcul des mensualités (capital + intérêts)
+    if taux_mensuel > 0:
+        mensualite = montant_emprunte * taux_mensuel * (1 + taux_mensuel) ** nombre_mensualites / ((1 + taux_mensuel) ** nombre_mensualites - 1)
+    else:
+        mensualite = montant_emprunte / nombre_mensualites
+    
+    # Ajouter l'assurance emprunteur
+    mensualite_assurance = montant_emprunte * taux_assurance / 12
+    
+    return mensualite + mensualite_assurance
+
+def calculer_interets_premiere_annee(montant_emprunte, taux_emprunt, duree_emprunt):
+    """Calcule les intérêts payés la première année."""
+    taux_mensuel = taux_emprunt / 12
+    nombre_mensualites = duree_emprunt * 12
+    
+    if taux_mensuel <= 0:
+        return 0
+    
+    mensualite = montant_emprunte * taux_mensuel * (1 + taux_mensuel) ** nombre_mensualites / ((1 + taux_mensuel) ** nombre_mensualites - 1)
+    
+    # Calculer les intérêts pour la première année
+    interets_premiere_annee = 0
+    capital_restant = montant_emprunte
+    
+    for i in range(12):
+        interet_mois = capital_restant * taux_mensuel
+        amortissement_capital = mensualite - interet_mois
+        capital_restant -= amortissement_capital
+        interets_premiere_annee += interet_mois
+    
+    return interets_premiere_annee
+
+def calculer_amortissements(prix_achat, travaux, mobilier, part_terrain, 
+                           duree_amort_bien, duree_amort_travaux, duree_amort_mobilier):
+    """Calcule les amortissements annuels."""
+    # Valeur du bâti = prix d'achat - valeur du terrain
+    valeur_bati = prix_achat * (1 - part_terrain)
+    
+    # Calcul des amortissements annuels
+    amort_bati = valeur_bati / duree_amort_bien if duree_amort_bien > 0 else 0
+    amort_travaux = travaux / duree_amort_travaux if duree_amort_travaux > 0 else 0
+    amort_mobilier = mobilier / duree_amort_mobilier if duree_amort_mobilier > 0 else 0
+    
+    return {
+        "bati": amort_bati,
+        "travaux": amort_travaux,
+        "mobilier": amort_mobilier,
+        "total": amort_bati + amort_travaux + amort_mobilier
+    }
+
+def calculer_resultat_fiscal_lmnp(loyer_annuel, charges_annuelles, interets_emprunt, amortissements=None):
+    """Calcule le résultat fiscal en LMNP."""
+    resultat_hors_amort = loyer_annuel - charges_annuelles - interets_emprunt
+    
+    # Si un montant d'amortissement est fourni, on l'utilise pour le régime réel
+    if amortissements and resultat_hors_amort > 0:
+        # On utilise les amortissements seulement jusqu'à hauteur du résultat positif
+        amort_utilises = min(amortissements["total"], resultat_hors_amort)
+        resultat_fiscal = resultat_hors_amort - amort_utilises
+        amort_reportables = amortissements["total"] - amort_utilises
+    else:
+        resultat_fiscal = resultat_hors_amort
+        amort_reportables = amortissements["total"] if amortissements else 0
+    
+    return {
+        "resultat_hors_amort": resultat_hors_amort,
+        "resultat_fiscal": resultat_fiscal,
+        "amort_utilises": amort_utilises if amortissements and resultat_hors_amort > 0 else 0,
+        "amort_reportables": amort_reportables
+    }
+
+def calculer_economie_impots(resultat_fiscal, tmi):
+    """Calcule l'économie d'impôts liée au déficit foncier."""
+    if resultat_fiscal < 0:
+        # Plafond du déficit foncier imputable sur le revenu global = 10 700€
+        deficit_imputable = min(abs(resultat_fiscal), 10700)
+        economie_impots = deficit_imputable * tmi
+    else:
+        economie_impots = 0
+    
+    return economie_impots
+
+def calculer_impot_revenu_lmnp(resultat_fiscal, tmi):
+    """Calcule l'impôt sur le revenu en régime LMNP."""
+    if resultat_fiscal > 0:
+        return resultat_fiscal * tmi
+    else:
+        return 0
+
+def calculer_cashflow_mensuel(loyer_mensuel, charges_annuelles, mensualite_pret, economie_impots=0):
+    """Calcule le cash-flow mensuel."""
+    charges_mensuelles = charges_annuelles / 12
+    economie_impots_mensuelle = economie_impots / 12
+    
+    return loyer_mensuel - charges_mensuelles - mensualite_pret + economie_impots_mensuelle
+
+def calculer_rentabilite(cashflow_annuel, prix_acquisition):
+    """Calcule la rentabilité de l'investissement."""
+    if prix_acquisition > 0:
+        return cashflow_annuel / prix_acquisition * 100
+    else:
+        return 0
+
+def calculer_tableau_amortissement_pret(montant_emprunte, taux_annuel, duree_annees):
+    """Génère le tableau d'amortissement du prêt."""
+    taux_mensuel = taux_annuel / 12
+    nb_mensualites = duree_annees * 12
+    
+    if taux_mensuel <= 0:
+        mensualite = montant_emprunte / nb_mensualites
+    else:
+        mensualite = montant_emprunte * taux_mensuel * (1 + taux_mensuel) ** nb_mensualites / ((1 + taux_mensuel) ** nb_mensualites - 1)
+    
+    tableau = []
+    capital_restant = montant_emprunte
+    
+    for i in range(1, nb_mensualites + 1):
+        interet = capital_restant * taux_mensuel
+        amortissement = mensualite - interet
+        capital_restant -= amortissement
+        
+        tableau.append({
+            "mois": i,
+            "mensualite": mensualite,
+            "amortissement": amortissement,
+            "interet": interet,
+            "capital_restant": max(0, capital_restant)  # Éviter les valeurs négatives dues aux arrondis
+        })
+    
+    return pd.DataFrame(tableau)
+
+def projeter_sur_duree(prix_achat, travaux, mobilier, loyer_mensuel, charges_annuelles, 
+                     apport, duree_emprunt, taux_emprunt, taux_assurance, duree_projection, 
+                     taux_augmentation_bien, taux_augmentation_loyer=0.01, taux_augmentation_charges=0.02,
+                     part_terrain=0.1, duree_amort_bien=35, duree_amort_travaux=12, duree_amort_mobilier=6, tmi=0.11):
+    """Projette l'investissement sur la durée spécifiée."""
+    # Initialisation
+    frais_notaire = calculer_frais_notaire(prix_achat, 0.075)  # 7.5% par défaut
+    prix_acquisition = calculer_prix_acquisition(prix_achat, travaux, frais_notaire)
+    montant_emprunte = prix_acquisition - apport
+    mensualite = calculer_mensualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
+    
+    projection = []
+    loyer = loyer_mensuel
+    charges = charges_annuelles
+    valeur_bien = prix_achat + travaux
+    
+    # Calcul du tableau d'amortissement pour obtenir les intérêts année par année
+    tableau_amort = calculer_tableau_amortissement_pret(montant_emprunte, taux_emprunt, duree_emprunt)
+    
+    # Calcul des amortissements annuels (constants sur la durée)
+    amortissements_annuels = calculer_amortissements(
+        prix_achat, travaux, mobilier, part_terrain, 
+        duree_amort_bien, duree_amort_travaux, duree_amort_mobilier
+    )
+    
+    # Variables pour le suivi des amortissements reportés
+    amort_reportes_cumules = 0
+    
+    for annee in range(1, duree_projection + 1):
+        # Mise à jour des valeurs avec inflation
+        loyer = loyer_mensuel * (1 + taux_augmentation_loyer) ** (annee - 1)
+        charges = charges_annuelles * (1 + taux_augmentation_charges) ** (annee - 1)
+        valeur_bien = (prix_achat + travaux) * (1 + taux_augmentation_bien) ** (annee - 1)
+        
+        # Calcul des intérêts payés cette année
+        debut_mois = (annee - 1) * 12 + 1
+        fin_mois = annee * 12
+        if debut_mois <= len(tableau_amort):
+            interets_annee = tableau_amort.loc[(tableau_amort['mois'] >= debut_mois) & 
+                                            (tableau_amort['mois'] <= fin_mois), 'interet'].sum()
+        else:
+            interets_annee = 0
+        
+        loyer_annuel = loyer * 12
+        
+        # Calcul du résultat fiscal LMNP
+        amort_disponibles = {
+            "bati": amortissements_annuels["bati"],
+            "travaux": amortissements_annuels["travaux"],
+            "mobilier": amortissements_annuels["mobilier"],
+            "total": amortissements_annuels["total"] + amort_reportes_cumules
+        }
+        
+        resultat = calculer_resultat_fiscal_lmnp(loyer_annuel, charges, interets_annee, amort_disponibles)
+        
+        # Mise à jour des amortissements reportés
+        amort_reportes_cumules = resultat["amort_reportables"]
+        
+        # Calcul des économies d'impôts
+        economie_impots = calculer_economie_impots(resultat["resultat_fiscal"], tmi)
+        
+        # Calcul de l'impôt sur le revenu LMNP
+        impot_revenu_lmnp = calculer_impot_revenu_lmnp(resultat["resultat_fiscal"], tmi)
+        
+        # Calcul du cash-flow
+        cashflow_mensuel = calculer_cashflow_mensuel(loyer, charges, mensualite if annee <= duree_emprunt else 0, economie_impots)
+        cashflow_annuel = cashflow_mensuel * 12
+        
+        # Ajouter les données de l'année à la projection
+        projection.append({
+            "annee": annee,
+            "valeur_bien": valeur_bien,
+            "loyer_mensuel": loyer,
+            "loyer_annuel": loyer_annuel,
+            "charges_annuelles": charges,
+            "interets_emprunt": interets_annee,
+            "mensualite_annuelle": mensualite * 12 if annee <= duree_emprunt else 0,
+            "resultat_hors_amort": resultat["resultat_hors_amort"],
+            "amort_utilises": resultat["amort_utilises"],
+            "amort_reportables": resultat["amort_reportables"],
+            "resultat_fiscal": resultat["resultat_fiscal"],
+            "economie_impots": economie_impots,
+            "impot_revenu_lmnp": impot_revenu_lmnp,
+            "cashflow_mensuel": cashflow_mensuel,
+            "cashflow_annuel": cashflow_annuel,
+            "rentabilite": calculer_rentabilite(cashflow_annuel, prix_acquisition)
+        })
+    
+    return pd.DataFrame(projection)
+
+# Fonction pour créer les graphiques
+def create_evolution_graph(df, y_columns, title, y_axis_title, colors=None):
+    """Crée un graphique d'évolution sur plusieurs années."""
+    fig = go.Figure()
+    
+    for i, column in enumerate(y_columns):
+        color = colors[i] if colors and i < len(colors) else None
+        fig.add_trace(go.Scatter(
+            x=df["annee"],
+            y=df[column],
+            mode="lines+markers",
+            name=column,
+            line=dict(color=color) if color else None
+        ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Année",
+        yaxis_title=y_axis_title,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=400
+    )
+    
+    return fig
+
+def create_stacked_bar(df, categories, title, y_axis_title, colors=None):
+    """Crée un graphique en barres empilées."""
+    fig = go.Figure()
+    
+    for i, category in enumerate(categories):
+        color = colors[i] if colors and i < len(colors) else None
+        fig.add_trace(go.Bar(
+            x=df["annee"],
+            y=df[category],
+            name=category,
+            marker_color=color
+        ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Année",
+        yaxis_title=y_axis_title,
+        barmode="stack",
+        height=400
+    )
+    
+    return fig
+
+def create_comparison_chart(df, metric1, metric2, name1, name2, title, y_axis_title):
+    """Crée un graphique de comparaison entre deux métriques."""
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=df["annee"],
+        y=df[metric1],
+        name=name1,
+        marker_color="blue"
+    ))
+    
+    fig.add_trace(go.Bar(
+        x=df["annee"],
+        y=df[metric2],
+        name=name2,
+        marker_color="green"
+    ))
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Année",
+        yaxis_title=y_axis_title,
+        barmode="group",
+        height=400
+    )
+    
+    return fig
+
 def make_blue_input(label, key, value, min_value=None, max_value=None, step=None, format=None, help=None, unit=""):
     """Crée un champ de saisie en bleu pour indiquer qu'il est modifiable."""
     col1, col2 = st.columns([3, 1])
@@ -365,330 +690,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-            st.subheader("Imposition
-
-# ----- FONCTIONS DE CALCUL -----
-# Ces fonctions reproduisent la logique des calculs du fichier Excel
-
-def calculer_frais_notaire(prix_achat, taux_frais_notaire):
-    """Calcule les frais de notaire."""
-    return prix_achat * taux_frais_notaire
-
-def calculer_prix_acquisition(prix_achat, travaux, frais_notaire):
-    """Calcule le prix d'acquisition total."""
-    return prix_achat + travaux + frais_notaire
-
-def calculer_loyer_annuel(loyer_mensuel, vacance_locative):
-    """Calcule le loyer annuel en tenant compte de la vacance locative."""
-    return loyer_mensuel * (12 - vacance_locative)
-
-def calculer_charges_annuelles(taxe_fonciere, charges_copro, entretien_courant, 
-                               gestion_locative, comptable, gros_entretien, 
-                               assurance_pno, autres_depenses):
-    """Calcule les charges annuelles totales."""
-    return (taxe_fonciere + charges_copro + entretien_courant + 
-            gestion_locative * 12 + comptable * 12 + gros_entretien + 
-            assurance_pno + autres_depenses)
-
-def calculer_mensualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance):
-    """Calcule la mensualité du prêt (capital + intérêts + assurance)."""
-    taux_mensuel = taux_emprunt / 12
-    nombre_mensualites = duree_emprunt * 12
-    
-    # Formule de calcul des mensualités (capital + intérêts)
-    if taux_mensuel > 0:
-        mensualite = montant_emprunte * taux_mensuel * (1 + taux_mensuel) ** nombre_mensualites / ((1 + taux_mensuel) ** nombre_mensualites - 1)
-    else:
-        mensualite = montant_emprunte / nombre_mensualites
-    
-    # Ajouter l'assurance emprunteur
-    mensualite_assurance = montant_emprunte * taux_assurance / 12
-    
-    return mensualite + mensualite_assurance
-
-def calculer_interets_premiere_annee(montant_emprunte, taux_emprunt, duree_emprunt):
-    """Calcule les intérêts payés la première année."""
-    taux_mensuel = taux_emprunt / 12
-    nombre_mensualites = duree_emprunt * 12
-    
-    if taux_mensuel <= 0:
-        return 0
-    
-    mensualite = montant_emprunte * taux_mensuel * (1 + taux_mensuel) ** nombre_mensualites / ((1 + taux_mensuel) ** nombre_mensualites - 1)
-    
-    # Calculer les intérêts pour la première année
-    interets_premiere_annee = 0
-    capital_restant = montant_emprunte
-    
-    for i in range(12):
-        interet_mois = capital_restant * taux_mensuel
-        amortissement_capital = mensualite - interet_mois
-        capital_restant -= amortissement_capital
-        interets_premiere_annee += interet_mois
-    
-    return interets_premiere_annee
-
-def calculer_amortissements(prix_achat, travaux, mobilier, part_terrain, 
-                           duree_amort_bien, duree_amort_travaux, duree_amort_mobilier):
-    """Calcule les amortissements annuels."""
-    # Valeur du bâti = prix d'achat - valeur du terrain
-    valeur_bati = prix_achat * (1 - part_terrain)
-    
-    # Calcul des amortissements annuels
-    amort_bati = valeur_bati / duree_amort_bien if duree_amort_bien > 0 else 0
-    amort_travaux = travaux / duree_amort_travaux if duree_amort_travaux > 0 else 0
-    amort_mobilier = mobilier / duree_amort_mobilier if duree_amort_mobilier > 0 else 0
-    
-    return {
-        "bati": amort_bati,
-        "travaux": amort_travaux,
-        "mobilier": amort_mobilier,
-        "total": amort_bati + amort_travaux + amort_mobilier
-    }
-
-def calculer_resultat_fiscal_lmnp(loyer_annuel, charges_annuelles, interets_emprunt, amortissements=None):
-    """Calcule le résultat fiscal en LMNP."""
-    resultat_hors_amort = loyer_annuel - charges_annuelles - interets_emprunt
-    
-    # Si un montant d'amortissement est fourni, on l'utilise pour le régime réel
-    if amortissements and resultat_hors_amort > 0:
-        # On utilise les amortissements seulement jusqu'à hauteur du résultat positif
-        amort_utilises = min(amortissements["total"], resultat_hors_amort)
-        resultat_fiscal = resultat_hors_amort - amort_utilises
-        amort_reportables = amortissements["total"] - amort_utilises
-    else:
-        resultat_fiscal = resultat_hors_amort
-        amort_reportables = amortissements["total"] if amortissements else 0
-    
-    return {
-        "resultat_hors_amort": resultat_hors_amort,
-        "resultat_fiscal": resultat_fiscal,
-        "amort_utilises": amort_utilises if amortissements and resultat_hors_amort > 0 else 0,
-        "amort_reportables": amort_reportables
-    }
-
-def calculer_economie_impots(resultat_fiscal, tmi):
-    """Calcule l'économie d'impôts liée au déficit foncier."""
-    if resultat_fiscal < 0:
-        # Plafond du déficit foncier imputable sur le revenu global = 10 700€
-        deficit_imputable = min(abs(resultat_fiscal), 10700)
-        economie_impots = deficit_imputable * tmi
-    else:
-        economie_impots = 0
-    
-    return economie_impots
-
-def calculer_impot_revenu_lmnp(resultat_fiscal, tmi):
-    """Calcule l'impôt sur le revenu en régime LMNP."""
-    if resultat_fiscal > 0:
-        return resultat_fiscal * tmi
-    else:
-        return 0
-
-def calculer_cashflow_mensuel(loyer_mensuel, charges_annuelles, mensualite_pret, economie_impots=0):
-    """Calcule le cash-flow mensuel."""
-    charges_mensuelles = charges_annuelles / 12
-    economie_impots_mensuelle = economie_impots / 12
-    
-    return loyer_mensuel - charges_mensuelles - mensualite_pret + economie_impots_mensuelle
-
-def calculer_rentabilite(cashflow_annuel, prix_acquisition):
-    """Calcule la rentabilité de l'investissement."""
-    if prix_acquisition > 0:
-        return cashflow_annuel / prix_acquisition * 100
-    else:
-        return 0
-
-def calculer_tableau_amortissement_pret(montant_emprunte, taux_annuel, duree_annees):
-    """Génère le tableau d'amortissement du prêt."""
-    taux_mensuel = taux_annuel / 12
-    nb_mensualites = duree_annees * 12
-    
-    if taux_mensuel <= 0:
-        mensualite = montant_emprunte / nb_mensualites
-    else:
-        mensualite = montant_emprunte * taux_mensuel * (1 + taux_mensuel) ** nb_mensualites / ((1 + taux_mensuel) ** nb_mensualites - 1)
-    
-    tableau = []
-    capital_restant = montant_emprunte
-    
-    for i in range(1, nb_mensualites + 1):
-        interet = capital_restant * taux_mensuel
-        amortissement = mensualite - interet
-        capital_restant -= amortissement
-        
-        tableau.append({
-            "mois": i,
-            "mensualite": mensualite,
-            "amortissement": amortissement,
-            "interet": interet,
-            "capital_restant": max(0, capital_restant)  # Éviter les valeurs négatives dues aux arrondis
-        })
-    
-    return pd.DataFrame(tableau)
-
-def projeter_sur_duree(prix_achat, travaux, mobilier, loyer_mensuel, charges_annuelles, 
-                     apport, duree_emprunt, taux_emprunt, taux_assurance, duree_projection, 
-                     taux_augmentation_bien, taux_augmentation_loyer=0.01, taux_augmentation_charges=0.02,
-                     part_terrain=0.1, duree_amort_bien=35, duree_amort_travaux=12, duree_amort_mobilier=6, tmi=0.11):
-    """Projette l'investissement sur la durée spécifiée."""
-    # Initialisation
-    frais_notaire = calculer_frais_notaire(prix_achat, 0.075)  # 7.5% par défaut
-    prix_acquisition = calculer_prix_acquisition(prix_achat, travaux, frais_notaire)
-    montant_emprunte = prix_acquisition - apport
-    mensualite = calculer_mensualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
-    
-    projection = []
-    loyer = loyer_mensuel
-    charges = charges_annuelles
-    valeur_bien = prix_achat + travaux
-    
-    # Calcul du tableau d'amortissement pour obtenir les intérêts année par année
-    tableau_amort = calculer_tableau_amortissement_pret(montant_emprunte, taux_emprunt, duree_emprunt)
-    
-    # Calcul des amortissements annuels (constants sur la durée)
-    amortissements_annuels = calculer_amortissements(
-        prix_achat, travaux, mobilier, part_terrain, 
-        duree_amort_bien, duree_amort_travaux, duree_amort_mobilier
-    )
-    
-    # Variables pour le suivi des amortissements reportés
-    amort_reportes_cumules = 0
-    
-    for annee in range(1, duree_projection + 1):
-        # Mise à jour des valeurs avec inflation
-        loyer = loyer_mensuel * (1 + taux_augmentation_loyer) ** (annee - 1)
-        charges = charges_annuelles * (1 + taux_augmentation_charges) ** (annee - 1)
-        valeur_bien = (prix_achat + travaux) * (1 + taux_augmentation_bien) ** (annee - 1)
-        
-        # Calcul des intérêts payés cette année
-        debut_mois = (annee - 1) * 12 + 1
-        fin_mois = annee * 12
-        if debut_mois <= len(tableau_amort):
-            interets_annee = tableau_amort.loc[(tableau_amort['mois'] >= debut_mois) & 
-                                            (tableau_amort['mois'] <= fin_mois), 'interet'].sum()
-        else:
-            interets_annee = 0
-        
-        loyer_annuel = loyer * 12
-        
-        # Calcul du résultat fiscal LMNP
-        amort_disponibles = {
-            "bati": amortissements_annuels["bati"],
-            "travaux": amortissements_annuels["travaux"],
-            "mobilier": amortissements_annuels["mobilier"],
-            "total": amortissements_annuels["total"] + amort_reportes_cumules
-        }
-        
-        resultat = calculer_resultat_fiscal_lmnp(loyer_annuel, charges, interets_annee, amort_disponibles)
-        
-        # Mise à jour des amortissements reportés
-        amort_reportes_cumules = resultat["amort_reportables"]
-        
-        # Calcul des économies d'impôts
-        economie_impots = calculer_economie_impots(resultat["resultat_fiscal"], tmi)
-        
-        # Calcul de l'impôt sur le revenu LMNP
-        impot_revenu_lmnp = calculer_impot_revenu_lmnp(resultat["resultat_fiscal"], tmi)
-        
-        # Calcul du cash-flow
-        cashflow_mensuel = calculer_cashflow_mensuel(loyer, charges, mensualite if annee <= duree_emprunt else 0, economie_impots)
-        cashflow_annuel = cashflow_mensuel * 12
-        
-        # Ajouter les données de l'année à la projection
-        projection.append({
-            "annee": annee,
-            "valeur_bien": valeur_bien,
-            "loyer_mensuel": loyer,
-            "loyer_annuel": loyer_annuel,
-            "charges_annuelles": charges,
-            "interets_emprunt": interets_annee,
-            "mensualite_annuelle": mensualite * 12 if annee <= duree_emprunt else 0,
-            "resultat_hors_amort": resultat["resultat_hors_amort"],
-            "amort_utilises": resultat["amort_utilises"],
-            "amort_reportables": resultat["amort_reportables"],
-            "resultat_fiscal": resultat["resultat_fiscal"],
-            "economie_impots": economie_impots,
-            "impot_revenu_lmnp": impot_revenu_lmnp,
-            "cashflow_mensuel": cashflow_mensuel,
-            "cashflow_annuel": cashflow_annuel,
-            "rentabilite": calculer_rentabilite(cashflow_annuel, prix_acquisition)
-        })
-    
-    return pd.DataFrame(projection)
-
-# Fonction pour créer les graphiques
-def create_evolution_graph(df, y_columns, title, y_axis_title, colors=None):
-    """Crée un graphique d'évolution sur plusieurs années."""
-    fig = go.Figure()
-    
-    for i, column in enumerate(y_columns):
-        color = colors[i] if colors and i < len(colors) else None
-        fig.add_trace(go.Scatter(
-            x=df["annee"],
-            y=df[column],
-            mode="lines+markers",
-            name=column,
-            line=dict(color=color) if color else None
-        ))
-    
-    fig.update_layout(
-        title=title,
-        xaxis_title="Année",
-        yaxis_title=y_axis_title,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        height=400
-    )
-    
-    return fig
-
-def create_stacked_bar(df, categories, title, y_axis_title, colors=None):
-    """Crée un graphique en barres empilées."""
-    fig = go.Figure()
-    
-    for i, category in enumerate(categories):
-        color = colors[i] if colors and i < len(colors) else None
-        fig.add_trace(go.Bar(
-            x=df["annee"],
-            y=df[category],
-            name=category,
-            marker_color=color
-        ))
-    
-    fig.update_layout(
-        title=title,
-        xaxis_title="Année",
-        yaxis_title=y_axis_title,
-        barmode="stack",
-        height=400
-    )
-    
-    return fig
-
-def create_comparison_chart(df, metric1, metric2, name1, name2, title, y_axis_title):
-    """Crée un graphique de comparaison entre deux métriques."""
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        x=df["annee"],
-        y=df[metric1],
-        name=name1,
-        marker_color="blue"
-    ))
-    
-    fig.add_trace(go.Bar(
-        x=df["annee"],
-        y=df[metric2],
-        name=name2,
-        marker_color="green"
-    ))
-    
-    fig.update_layout(
-        title=title,
-        xaxis_title="Année",
-        yaxis_title=y_axis_title,
-        barmode="group",
-        height=400
-    )
-    
-    return fig
