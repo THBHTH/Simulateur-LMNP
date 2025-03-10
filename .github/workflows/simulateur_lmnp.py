@@ -1,6 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+# Importation conditionnelle de matplotlib
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    # Continuer sans matplotlib, car nous utilisons plotly pour les graphiques
+    pass
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -190,6 +196,219 @@ def projeter_sur_duree(prix_achat, travaux, mobilier, loyer_mensuel, charges_ann
     prix_acquisition = calculer_prix_acquisition(prix_achat, travaux, frais_notaire)
     montant_emprunte = prix_acquisition - apport
     mensualite = calculer_mensualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
+    loyer_annuel = calculer_loyer_annuel(loyer_mensuel, vacance_locative)
+    
+    # Calcul des intérêts de la première année
+    interets_premiere_annee = calculer_interets_premiere_annee(montant_emprunte, taux_emprunt, duree_emprunt)
+    
+    # Calcul des amortissements
+    amortissements = calculer_amortissements(
+        prix_achat, travaux, mobilier, part_terrain, 
+        duree_amort_bien, duree_amort_travaux, duree_amort_mobilier
+    )
+    
+    # Calcul du résultat fiscal LMNP
+    resultat_fiscal = calculer_resultat_fiscal_lmnp(loyer_annuel, charges_annuelles, interets_premiere_annee, amortissements)
+    
+    # Calcul des économies d'impôts
+    economie_impots = calculer_economie_impots(resultat_fiscal["resultat_fiscal"], tmi)
+    
+    # Calcul du cash-flow mensuel
+    cashflow_mensuel = calculer_cashflow_mensuel(loyer_mensuel, charges_annuelles, mensualite, economie_impots)
+    
+    # Calcul de la rentabilité
+    rentabilite = calculer_rentabilite(cashflow_mensuel * 12, prix_acquisition)
+    
+    # Afficher les résultats clés dans l'onglet Entrées
+    with tab1:
+        st.markdown("---")
+        st.subheader("📊 Résultats clés")
+        
+        # Créer une grille de 2x2 pour les métriques
+        metric_cols = st.columns(4)
+        
+        with metric_cols[0]:
+            st.metric("Cash-flow mensuel", f"{cashflow_mensuel:.2f} €")
+        with metric_cols[1]:
+            st.metric("Rentabilité", f"{rentabilite:.2f} %")
+        with metric_cols[2]:
+            st.metric("Économie d'impôts", f"{economie_impots:.2f} €/an")
+        with metric_cols[3]:
+            st.metric("Mensualité du prêt", f"{mensualite:.2f} €/mois")
+    
+    # Projection sur la durée de détention
+    projection = projeter_sur_duree(
+        prix_achat, travaux, mobilier, loyer_mensuel, charges_annuelles,
+        apport, duree_emprunt, taux_emprunt, taux_assurance, int(duree_detention),
+        taux_augmentation_bien, taux_augmentation_loyer, taux_augmentation_charges,
+        part_terrain, duree_amort_bien, duree_amort_travaux, duree_amort_mobilier, tmi
+    )
+    
+    # Afficher les résultats détaillés dans l'onglet Résultats détaillés
+    with tab2:
+        st.subheader("Projection sur la durée de détention")
+        
+        # Graphique d'évolution de la valeur du bien
+        st.plotly_chart(
+            create_evolution_graph(
+                projection, 
+                ["valeur_bien"], 
+                "Évolution de la valeur du bien", 
+                "Valeur (€)",
+                ["blue"]
+            ),
+            use_container_width=True
+        )
+        
+        # Graphique d'évolution des revenus et charges
+        st.plotly_chart(
+            create_stacked_bar(
+                projection,
+                ["loyer_annuel", "charges_annuelles", "interets_emprunt", "mensualite_annuelle"],
+                "Évolution des revenus et charges",
+                "Montant (€)",
+                ["green", "red", "orange", "darkred"]
+            ),
+            use_container_width=True
+        )
+        
+        # Graphique d'évolution du cash-flow
+        st.plotly_chart(
+            create_evolution_graph(
+                projection,
+                ["cashflow_mensuel"],
+                "Évolution du cash-flow mensuel",
+                "Cash-flow (€/mois)",
+                ["green"]
+            ),
+            use_container_width=True
+        )
+        
+        # Graphique d'évolution de la rentabilité
+        st.plotly_chart(
+            create_evolution_graph(
+                projection,
+                ["rentabilite"],
+                "Évolution de la rentabilité",
+                "Rentabilité (%)",
+                ["purple"]
+            ),
+            use_container_width=True
+        )
+        
+        # Graphique de comparaison impôts vs économies
+        st.plotly_chart(
+            create_comparison_chart(
+                projection,
+                "impot_revenu_lmnp",
+                "economie_impots",
+                "Impôt sur le revenu LMNP",
+                "Économies d'impôts",
+                "Impôt vs Économies d'impôts",
+                "Montant (€)"
+            ),
+            use_container_width=True
+        )
+        
+        # Tableau des résultats détaillés
+        st.subheader("Résultats année par année")
+        st.dataframe(
+            projection[[
+                "annee", "valeur_bien", "loyer_mensuel", "charges_annuelles",
+                "interets_emprunt", "resultat_fiscal", "impot_revenu_lmnp",
+                "economie_impots", "cashflow_mensuel", "rentabilite"
+            ]].style.format({
+                "valeur_bien": "{:.2f} €",
+                "loyer_mensuel": "{:.2f} €",
+                "charges_annuelles": "{:.2f} €",
+                "interets_emprunt": "{:.2f} €",
+                "resultat_fiscal": "{:.2f} €",
+                "impot_revenu_lmnp": "{:.2f} €",
+                "economie_impots": "{:.2f} €",
+                "cashflow_mensuel": "{:.2f} €",
+                "rentabilite": "{:.2f} %"
+            }),
+            use_container_width=True
+        )
+    
+    # Afficher les tableaux d'amortissement dans l'onglet Tableaux d'amortissement
+    with tab3:
+        st.subheader("Tableau d'amortissement du prêt")
+        
+        # Calculer le tableau d'amortissement
+        tableau_amort = calculer_tableau_amortissement_pret(montant_emprunte, taux_emprunt, duree_emprunt)
+        
+        # Graphique d'évolution du capital et des intérêts
+        capital_par_annee = tableau_amort.groupby(tableau_amort['mois'].apply(lambda x: (x-1)//12 + 1))['amortissement'].sum().reset_index()
+        capital_par_annee.columns = ['annee', 'amortissement_capital']
+        
+        interets_par_annee = tableau_amort.groupby(tableau_amort['mois'].apply(lambda x: (x-1)//12 + 1))['interet'].sum().reset_index()
+        interets_par_annee.columns = ['annee', 'interets']
+        
+        df_amort_annuel = pd.merge(capital_par_annee, interets_par_annee, on='annee')
+        
+        # Graphique d'évolution du capital et des intérêts
+        st.plotly_chart(
+            create_stacked_bar(
+                df_amort_annuel,
+                ["amortissement_capital", "interets"],
+                "Répartition des mensualités par année",
+                "Montant (€)",
+                ["blue", "red"]
+            ),
+            use_container_width=True
+        )
+        
+        # Tableau d'amortissement (version résumée par année)
+        st.subheader("Résumé annuel")
+        st.dataframe(
+            df_amort_annuel.style.format({
+                "amortissement_capital": "{:.2f} €",
+                "interets": "{:.2f} €"
+            }),
+            use_container_width=True
+        )
+        
+        # Option pour afficher le tableau complet
+        if st.checkbox("Afficher le tableau d'amortissement complet (mensuel)"):
+            st.subheader("Tableau d'amortissement mensuel")
+            tableau_amort['mois_annee'] = tableau_amort['mois'].apply(lambda x: f"Année {(x-1)//12 + 1}, Mois {((x-1)%12) + 1}")
+            st.dataframe(
+                tableau_amort[['mois_annee', 'mensualite', 'amortissement', 'interet', 'capital_restant']].style.format({
+                    "mensualite": "{:.2f} €",
+                    "amortissement": "{:.2f} €",
+                    "interet": "{:.2f} €",
+                    "capital_restant": "{:.2f} €"
+                }),
+                use_container_width=True
+            )
+        
+        # Tableau d'amortissement du bien
+        st.subheader("Amortissements")
+        
+        # Résumé des amortissements
+        st.markdown(f"**Bâti:** {amortissements['bati']:.2f} €/an sur {duree_amort_bien} ans")
+        st.markdown(f"**Travaux:** {amortissements['travaux']:.2f} €/an sur {duree_amort_travaux} ans")
+        st.markdown(f"**Mobilier:** {amortissements['mobilier']:.2f} €/an sur {duree_amort_mobilier} ans")
+        st.markdown(f"**Total des amortissements annuels:** {amortissements['total']:.2f} €/an")
+        
+        # Graphique d'évolution des amortissements utilisés et reportés
+        amort_df = projection[['annee', 'amort_utilises', 'amort_reportables']]
+        
+        st.plotly_chart(
+            create_stacked_bar(
+                amort_df,
+                ["amort_utilises", "amort_reportables"],
+                "Amortissements utilisés et reportables par année",
+                "Montant (€)",
+                ["green", "orange"]
+            ),
+            use_container_width=True
+        )
+
+
+if __name__ == "__main__":
+    main()ualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
     
     projection = []
     loyer = loyer_mensuel
@@ -475,13 +694,4 @@ def main():
         assurance_pno, autres_depenses
     )
     
-    mensualite = calculer_mensualite_pret(montant_emprunte, taux_emprunt, duree_emprunt, taux_assurance)
-    loyer_annuel = calculer_loyer_annuel(loyer_mensuel, vacance_locative)
-    
-    # Calcul des intérêts de la première année
-    interets_premiere_annee = calculer_interets_premiere_annee(montant_emprunte, taux_emprunt, duree_emprunt)
-    
-    # Calcul des amortissements
-    amortissements = calculer_amortissements(
-        prix_achat, travaux, mobilier, part_terrain, 
-        duree_amort_bien, duree_amort_trav
+    mensualite = calculer_mens
